@@ -1,9 +1,10 @@
 import { Requester, Validator, AdapterError } from '@chainlink/ea-bootstrap'
 import { ExecuteWithConfig } from '@chainlink/types'
-import { LCDClient, MnemonicKey, MsgExecuteContract, isTxError } from '@terra-money/terra.js'
+import { LCDClient, MnemonicKey, MsgExecuteContract, isTxError, BlockTxBroadcastResult, Wallet } from '@terra-money/terra.js'
 import { Config, DEFAULT_GAS_PRICES } from '../config'
 import { ConfigResponse } from '../models/configResponse'
 import { SubmitMsg } from '../models/submitMsg'
+import { Mutex } from "async-mutex"
 
 export const NAME = 'fluxmonitor'
 
@@ -12,6 +13,18 @@ const customParams = {
   roundId: ['round_id'],
   result: ['result'],
 }
+
+const signAndBroadcast = async (wallet: Wallet, client: LCDClient, message: MsgExecuteContract): Promise<BlockTxBroadcastResult> => {
+  const tx = await wallet.createAndSignTx({
+    msgs: [message],
+    gas: "300000"
+  })
+
+  const result = await client.tx.broadcast(tx);
+  return result
+}
+
+const mutex = new Mutex();
 
 export const execute: ExecuteWithConfig<Config> = async (request, config) => {
   const validator = new Validator(request, customParams)
@@ -32,24 +45,20 @@ export const execute: ExecuteWithConfig<Config> = async (request, config) => {
     get_aggregator_config: {},
   })
 
-  const result = decimalResult.toFixed(aggregatorConfig.decimals).replace('.', '')
+  const submission = decimalResult.toFixed(aggregatorConfig.decimals).replace('.', '')
 
   const wallet = terra.wallet(new MnemonicKey({ mnemonic: config.mnemonic }))
 
   const submitMsg: SubmitMsg = {
     submit: {
       round_id: roundId,
-      submission: result,
+      submission,
     },
   }
   const execMsg = new MsgExecuteContract(wallet.key.accAddress, address, submitMsg)
 
   try {
-    const tx = await wallet.createAndSignTx({
-      msgs: [execMsg],
-      gas: "300000"
-    })
-    const result = await terra.tx.broadcast(tx)
+    const result = await mutex.runExclusive(async () => signAndBroadcast(wallet, terra, execMsg))
 
     if (isTxError(result)) {
       throw new Error(result.raw_log)
