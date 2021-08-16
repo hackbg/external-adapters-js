@@ -4,7 +4,6 @@ import { LCDClient, MnemonicKey, MsgExecuteContract, isTxError, BlockTxBroadcast
 import { Config, DEFAULT_GAS_PRICES } from '../config'
 import { ConfigResponse } from '../models/configResponse'
 import { SubmitMsg } from '../models/submitMsg'
-import { Mutex } from "async-mutex"
 
 export const NAME = 'fluxmonitor'
 
@@ -24,7 +23,6 @@ const signAndBroadcast = async (wallet: Wallet, client: LCDClient, message: MsgE
   return result
 }
 
-const mutex = new Mutex();
 
 export const execute: ExecuteWithConfig<Config> = async (request, config) => {
   const validator = new Validator(request, customParams)
@@ -58,7 +56,7 @@ export const execute: ExecuteWithConfig<Config> = async (request, config) => {
   const execMsg = new MsgExecuteContract(wallet.key.accAddress, address, submitMsg)
 
   try {
-    const result = await mutex.runExclusive(async () => signAndBroadcast(wallet, terra, execMsg))
+    const result = await signAndBroadcast(wallet, terra, execMsg)
 
     if (isTxError(result)) {
       throw new Error(result.raw_log)
